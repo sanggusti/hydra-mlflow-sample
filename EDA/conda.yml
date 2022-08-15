@@ -3,10 +3,11 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python
-  - requests
+  - jupyterlab
+  - seaborn
+  - pandas
   - pip
-  - mlflow
-  - hydra-core
+  - pandas-profiling
+  - pyarrow
   - pip:
       - wandb
