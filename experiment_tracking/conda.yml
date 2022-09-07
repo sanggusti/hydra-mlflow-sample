@@ -1,0 +1,11 @@
+name: experiment_tracking
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - pandas
+  - pip
+  - mlflow
+  - hydra-core
+  - pip:
+      - wandb
