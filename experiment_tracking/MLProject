@@ -1,0 +1,12 @@
+name: experiment_tracking
+conda_env: conda.yml
+
+entry_points:
+  main:
+    parameters:
+      hydra_options:
+        descriptions: Hydra parameters to override
+        type: str
+        default: ''
+    command: >-
+      python main.py $(echo {hydra_options})
