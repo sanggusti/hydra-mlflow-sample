@@ -1,0 +1,14 @@
+name: decision_tree
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - pandas
+  - pip
+  - scikit-learn
+  - matplotlib
+  - plotly
+  - pillow
+  - mlflow
+  - pip:
+      - wandb
