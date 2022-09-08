@@ -9,3 +9,4 @@ dependencies:
   - hydra-core
   - pip:
       - wandb
+      - hydra-joblib-launcher
