@@ -28,7 +28,8 @@ def go(config: DictConfig):
         "main",
         parameters={
             "train_data": config["data"]["train_data"],
-            "model_config": model_config
+            "model_config": model_config,
+            "export_artifact": config["random_forest_pipeline"]["export_artifact"]
         },
     )
 

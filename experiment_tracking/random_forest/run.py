@@ -2,9 +2,13 @@
 import argparse
 import logging
 import yaml
+import tempfile
+import mlflow
+import os
 
 import pandas as pd
 import numpy as np
+from mlflow.models import infer_signature
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -47,34 +51,23 @@ def go(args):
     logger.info("Fitting")
     pipe.fit(X_train, y_train)
 
+    # Evaluate
+    pred = pipe.predict(X_val)
+    pred_proba = pipe.predict_proba(X_val)
+
     logger.info("Scoring")
     score = roc_auc_score(
-        y_val, pipe.predict_proba(X_val), average="macro", multi_class="ovo"
+        y_val, pred_proba, average="macro", multi_class="ovo"
     )
 
     run.summary["AUC"] = score
 
-    # We collect the feature importance for all non-nlp features first
-    feat_names = np.array(
-        pipe["preprocessor"].transformers[0][-1]
-        + pipe["preprocessor"].transformers[1][-1]
+    # Export if required
+    if args.export_artifact != "null":
+        export_model(run, pipe, X_val, pred, args.export_artifact
     )
-    feat_imp = pipe["classifier"].feature_importances_[: len(feat_names)]
 
-    # For the NLP feature we sum across all the TF-IDF dimensions into a global
-    # NLP importance
-    nlp_importance = sum(pipe["classifier"].feature_importances_[len(feat_names) :])
-
-    feat_imp = np.append(feat_imp, nlp_importance)
-    feat_names = np.append(feat_names, "title + song_name")
-
-    fig_feat_imp, sub_feat_imp = plt.subplots(figsize=(10, 10))
-    idx = np.argsort(feat_imp)[::-1]
-    sub_feat_imp.bar(range(feat_imp.shape[0]), feat_imp[idx], color="r", align="center")
-    _ = sub_feat_imp.set_xticks(range(feat_imp.shape[0]))
-    _ = sub_feat_imp.set_xticklabels(feat_names[idx], rotation=90)
-
-    fig_feat_imp.tight_layout()
+    fig_feat_imp = plot_feature_importance(pipe)
 
     fig_cm, sub_cm = plt.subplots(figsize=(10, 10))
     plot_confusion_matrix(
@@ -94,6 +87,50 @@ def go(args):
             "confusion_matrix": wandb.Image(fig_cm),
         }
     )
+
+
+def export_model(run, pipe, X_val, val_pred, export_artifact):
+    signature = infer_signature(X_val, val_pred)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        export_path = os.path.join(temp_dir, "model_export")
+        mlflow.sklearn.save_model(
+            pipe,
+            export_path,
+            serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
+            signature=signature,
+            input_example=X_val.iloc[:2],
+        )
+
+        artifact = wandb.Artifact(
+            export_artifact,
+            type="model_export",
+            description="Random Forest pipeline export"
+        )
+        artifact.add_dir(export_path)
+        run.log_artifact(artifact)
+        artifact.wait()
+
+
+def plot_feature_importance(pipe):
+
+    # We collect the feature importance for all non-nlp features first
+    feat_names = np.array(
+        pipe["preprocessor"].transformers[0][-1]
+        + pipe["preprocessor"].transformers[1][-1]
+    )
+    feat_imp = pipe["classifier"].feature_importances_[: len(feat_names)]
+    # For the NLP feature we sum across all the TF-IDF dimensions into a global
+    # NLP importance
+    nlp_importance = sum(pipe["classifier"].feature_importances_[len(feat_names) :])
+    feat_imp = np.append(feat_imp, nlp_importance)
+    feat_names = np.append(feat_names, "title + song_name")
+    fig_feat_imp, sub_feat_imp = plt.subplots(figsize=(10, 10))
+    idx = np.argsort(feat_imp)[::-1]
+    sub_feat_imp.bar(range(feat_imp.shape[0]), feat_imp[idx], color="r", align="center")
+    _ = sub_feat_imp.set_xticks(range(feat_imp.shape[0]))
+    _ = sub_feat_imp.set_xticklabels(feat_names[idx], rotation=90)
+    fig_feat_imp.tight_layout()
+    return fig_feat_imp
 
 
 def get_training_inference_pipeline(args):
@@ -127,7 +164,9 @@ def get_training_inference_pipeline(args):
     nlp_transformer = make_pipeline(
         SimpleImputer(strategy="constant", fill_value=""),
         reshape_to_1d,
-        TfidfVectorizer(binary=True, max_features=model_config["tfidf"]["max_features"]),
+        TfidfVectorizer(
+            binary=True, max_features=model_config["tfidf"]["max_features"]
+        ),
     )
     # Put the 3 tracks together into one pipeline using the ColumnTransformer
     # This also drops the columns that we are not explicitly transforming
@@ -169,6 +208,14 @@ if __name__ == "__main__":
         type=str,
         help="Path to a YAML file containing the configuration for the random forest",
         required=True,
+    )
+
+    parser.add_argument(
+        "--export_artifact",
+        type=str,
+        help="Name of the artifact for the exported model. Use 'null' to not export the model",
+        required=False,
+        default="null",
     )
 
     args = parser.parse_args()
