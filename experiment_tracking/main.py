@@ -3,7 +3,7 @@ import json
 import mlflow
 import os
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 
 # This automatically reads in the configuration
@@ -18,10 +18,10 @@ def go(config: DictConfig):
     root_path = hydra.utils.get_original_cwd()
 
     # Serialize decision tree configuration
-    model_config = os.path.abspath("random_forest_config.json")
+    model_config = os.path.abspath("random_forest_config.yml")
 
     with open(model_config, "w+") as fp:
-        json.dump(dict(config["random_forest"]), fp)
+        fp.write(OmegaConf.to_yaml(config["random_forest_pipeline"]))
 
     _ = mlflow.run(
         os.path.join(root_path, "random_forest"),

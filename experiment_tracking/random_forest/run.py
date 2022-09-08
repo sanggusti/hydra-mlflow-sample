@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import argparse
 import logging
-import json
+import yaml
 
 import pandas as pd
 import numpy as np
@@ -16,13 +16,15 @@ import wandb
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.impute import SimpleImputer
 
+from omegaconf import OmegaConf
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)-15s %(message)s")
 logger = logging.getLogger()
 
 
 def go(args):
 
-    run = wandb.init(project="exercise_10", job_type="train")
+    run = wandb.init(job_type="train")
 
     logger.info("Downloading and reading train artifact")
     train_data_path = run.use_artifact(args.train_data).file()
@@ -40,7 +42,7 @@ def go(args):
 
     logger.info("Setting up pipeline")
 
-    pipe = get_inference_pipeline(args)
+    pipe = get_training_inference_pipeline(args)
 
     logger.info("Fitting")
     pipe.fit(X_train, y_train)
@@ -94,41 +96,38 @@ def go(args):
     )
 
 
-def get_inference_pipeline(args):
+def get_training_inference_pipeline(args):
+
+    # Get the configuration for the pipeline
+    with open(args.model_config) as fp:
+        model_config = yaml.safe_load(fp)
+    # Add it to the W&B configuration so the values for the hyperparams
+    # are tracked
+    wandb.config.update(model_config)
+
     # We need 3 separate preprocessing "tracks":
     # - one for categorical features
     # - one for numerical features
     # - one for textual ("nlp") features
     # Categorical preprocessing pipeline
-    categorical_features = sorted(["time_signature", "key"])
+    categorical_features = sorted(model_config["features"]["categorical"])
     categorical_transformer = make_pipeline(
         SimpleImputer(strategy="constant", fill_value=0), OrdinalEncoder()
     )
     # Numerical preprocessing pipeline
-    numeric_features = sorted([
-        "danceability",
-        "energy",
-        "loudness",
-        "speechiness",
-        "acousticness",
-        "instrumentalness",
-        "liveness",
-        "valence",
-        "tempo",
-        "duration_ms",
-    ])
+    numeric_features = sorted(model_config["features"]["numerical"])
     numeric_transformer = make_pipeline(
         SimpleImputer(strategy="median"), StandardScaler()
     )
     # Textual ("nlp") preprocessing pipeline
-    nlp_features = ["text_feature"]
+    nlp_features = sorted(model_config["features"]["nlp"])
     # This trick is needed because SimpleImputer wants a 2d input, but
     # TfidfVectorizer wants a 1d input. So we reshape in between the two steps
     reshape_to_1d = FunctionTransformer(np.reshape, kw_args={"newshape": -1})
     nlp_transformer = make_pipeline(
         SimpleImputer(strategy="constant", fill_value=""),
         reshape_to_1d,
-        TfidfVectorizer(binary=True),
+        TfidfVectorizer(binary=True, max_features=model_config["tfidf"]["max_features"]),
     )
     # Put the 3 tracks together into one pipeline using the ColumnTransformer
     # This also drops the columns that we are not explicitly transforming
@@ -140,18 +139,13 @@ def get_inference_pipeline(args):
         ],
         remainder="drop",  # This drops the columns that we do not transform
     )
-    # Get the configuration for the model
-    with open(args.model_config) as fp:
-        model_config = json.load(fp)
-    # Add it to the W&B configuration so the values for the hyperparams
-    # are tracked
-    wandb.config.update(model_config)
+
     # Append classifier to preprocessing pipeline.
     # Now we have a full prediction pipeline.
     pipe = Pipeline(
         steps=[
             ("preprocessor", preprocessor),
-            ("classifier", RandomForestClassifier(**model_config)),
+            ("classifier", RandomForestClassifier(**model_config["random_forest"])),
         ]
     )
     return pipe
@@ -173,7 +167,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model_config",
         type=str,
-        help="Path to a JSON file containing the configuration for the random forest",
+        help="Path to a YAML file containing the configuration for the random forest",
         required=True,
     )
 
